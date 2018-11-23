@@ -10,56 +10,77 @@
 #include <sys/mount.h>
 #include <syscall.h>
 #include <sys/stat.h>
+#include <string.h>
+#include <dirent.h>
+#include <errno.h>
 
-struct prog {
+#define BAIL_ON_ERROR(err) \
+    if ((err) == -1) { \
+        perror(NULL); \
+        printf("%d\n", errno); \
+        return -1; \
+    }
+
+struct config {
     char *prog_name;
     char **prog_args;
     char *root_path;
 };
 
-int child_func(void *_prog) {
-    struct prog *prog = (struct prog *) _prog;
-    // int err = setns(prog->mnt_fd, CLONE_NEWNS);
-    
-    // if (err == -1) {
-    //     perror("Child error");
-    //     return 0;
-    // }
-    int err = mount(prog->root_path, prog->root_path, NULL, MS_BIND | MS_REC, NULL);
-    if (err) {
-        perror("Error");
-    }
-    err = chdir(prog->root_path);
-    if (err) {
-        perror("chdir into root error");
-    }
-    mode_t mask = umask(0);
-    err = mkdir("dev", 0755);
-    if (err) {
-        perror("mkdir dev error");
-    }
-    err = mount("tmpfs", "dev", "tmpfs", 0, "mode=0755");
-    if (err) {
-        perror("mount tmpfs error");
-    }
-    err = mkdir("dev/tmp", 0755);
-    if (err) {
-        perror("mkdir dev/tmp error");
-    }
-    umask(mask);
-    char buf[128] = {0};
-    getcwd(buf, 127);
-    printf("pwd: %s\n", buf);
-    err = syscall(__NR_pivot_root, ".", "dev");
-    if (err) {
-        perror("Pivot error");
-    }
-    err = chdir("/");
-    if (err) {
-        perror("Chdir error");
-    }
+int child_func(void *_config) {
+    int err = 0;
+    struct config *config = (struct config *) _config;
 
-    execvp(prog->prog_name, prog->prog_args);
+    err = mount(NULL, "/", NULL, MS_PRIVATE | MS_REC, NULL);
+    BAIL_ON_ERROR(err)
+
+    char mount_dir[] = "/tmp/container_tmp.XXXXXX";
+    err = mkdtemp(mount_dir) == NULL;
+    BAIL_ON_ERROR(err)
+
+    err = mount(config->root_path, mount_dir, NULL, MS_BIND | MS_PRIVATE, NULL);
+    BAIL_ON_ERROR(err)
+
+    char inner_mount_dir[] = "/tmp/container_tmp.XXXXXX/old_root.XXXXXX";
+    memcpy(inner_mount_dir, mount_dir, sizeof(mount_dir) - 1);
+    err = mkdtemp(inner_mount_dir) == NULL;
+    BAIL_ON_ERROR(err)
+
+    err = syscall(SYS_pivot_root, mount_dir, inner_mount_dir);
+    BAIL_ON_ERROR(err)
+
+    err = chdir("/");
+    BAIL_ON_ERROR(err)
+
+    char *old_root_name = basename(inner_mount_dir);
+    char old_root[sizeof(inner_mount_dir) + 1] = { '/' };
+    strcpy(&old_root[1], old_root_name);
+
+    // printf("Calling exec\n");
+    // char buf[128];
+    // getcwd(buf, 127);
+    // printf("Current working directory: %s\n", buf);
+
+    // struct dirent *de;  // Pointer for directory entry 
+  
+    // // opendir() returns a pointer of DIR type.  
+    // DIR *dr = opendir("."); 
+  
+    // if (dr == NULL)  // opendir returns NULL if couldn't open directory 
+    // { 
+    //     printf("Could not open current directory" ); 
+    //     return 0; 
+    // } 
+  
+    // // Refer http://pubs.opengroup.org/onlinepubs/7990989775/xsh/readdir.html 
+    // // for readdir() 
+    // while ((de = readdir(dr)) != NULL) 
+    //         printf("%s\n", de->d_name); 
+  
+    // closedir(dr);     
+
+    err = execve(config->prog_name, config->prog_args, NULL);
+    BAIL_ON_ERROR(err)
     return 0;
 }
 
@@ -73,11 +94,11 @@ int main() {
 
     printf("Parent calling clone\n");
     char *prog_name = "/bin/bash";
-    char *prog_args[] = {"bash", NULL};
+    char *prog_args[] = {"/bin/bash", NULL};
     char *child_root_path = "child_root";
     
-    struct prog prog = {prog_name, prog_args, child_root_path};
-    int err = clone(&child_func, stack + STACK_SIZE, flags, &prog);
+    struct config config = {prog_name, prog_args, child_root_path};
+    int err = clone(&child_func, stack + STACK_SIZE, flags, &config);
     if (err == -1) {
       perror("Clone error");
     }
