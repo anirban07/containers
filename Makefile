@@ -1,5 +1,5 @@
 all: main.c
-	gcc -Wall -g -lcap main.c -o main
+	gcc -Wall -g -lcap -lseccomp main.c -o main
 
 clean:
 	rm -f main

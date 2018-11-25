@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <sys/prctl.h>
 #include <sys/capability.h>
+#include <seccomp.h>
 
 #define BAIL_ON_ERROR(err) \
     if ((err) == -1) { \
@@ -34,6 +35,9 @@ struct config {
 
 // Drops privileged capabilities of the root user
 static int capabilities();
+
+// Drops privileged syscalls
+static int syscalls();
 
 int child_func(void *_config) {
     int err = 0;
@@ -88,6 +92,9 @@ int child_func(void *_config) {
 
     err = capabilities();
     BAIL_ON_ERROR(err);
+
+    err = syscalls();
+    BAIL_ON_ERROR(err)
 
     err = execve(config->prog_name, config->prog_args, NULL);
     BAIL_ON_ERROR(err)
@@ -182,5 +189,94 @@ static int capabilities() {
     cap_free(capabilities);
 
     printf("Finished managing child process capabilities\n");
+    return 0;
+}
+
+static int syscalls() {
+    scmp_filter_ctx ctx = NULL;
+    int err = 0;
+    ctx = seccomp_init(SCMP_ACT_ALLOW);
+    err = ctx == NULL;
+    BAIL_ON_ERROR(err)
+
+    // Prevent new setguid, setgid executables from being enabled
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(chmod), 1,
+                SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID));
+    BAIL_ON_ERROR(err);
+
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(chmod), 1,
+                SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID));
+    BAIL_ON_ERROR(err)
+
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmod), 1,
+                SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID));
+    BAIL_ON_ERROR(err)
+    
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmod), 1,
+                SCMP_A1(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID));
+    BAIL_ON_ERROR(err)
+    
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmodat), 1,
+                SCMP_A2(SCMP_CMP_MASKED_EQ, S_ISUID, S_ISUID));
+    BAIL_ON_ERROR(err);
+    
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(fchmodat), 1,
+                SCMP_A2(SCMP_CMP_MASKED_EQ, S_ISGID, S_ISGID));
+    BAIL_ON_ERROR(err);
+
+    // Prevent new user namespaces from being created
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(unshare), 1,
+                SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER));
+    BAIL_ON_ERROR(err)
+    
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(clone), 1,
+                SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER));
+    BAIL_ON_ERROR(err)
+
+    // Prevent this process from writing to the terminal
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(ioctl), 1,
+                SCMP_A1(SCMP_CMP_MASKED_EQ, TIOCSTI, TIOCSTI));
+    BAIL_ON_ERROR(err)
+
+    // Prevent access to the kernel's keyring
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(keyctl), 0);
+    BAIL_ON_ERROR(err)
+
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(add_key), 0);
+    BAIL_ON_ERROR(err)
+    
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(request_key), 0);
+    BAIL_ON_ERROR(err)
+
+    // Prevent ptrace calls
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(ptrace), 0);
+    BAIL_ON_ERROR(err)
+
+    // Prevent NUMA node assignment
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(mbind), 0);
+    BAIL_ON_ERROR(err)
+
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(migrate_pages), 0);
+    BAIL_ON_ERROR(err)
+
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(move_pages), 0);
+    BAIL_ON_ERROR(err)
+
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(set_mempolicy), 0);
+    BAIL_ON_ERROR(err)
+
+    // Prevent this process from handling page faults
+    err = seccomp_rule_add(ctx, SCMP_FAIL, SCMP_SYS(userfaultfd), 0);
+    BAIL_ON_ERROR(err)
+
+    // Prevent setuid and setcap from being executed
+    err = seccomp_attr_set(ctx, SCMP_FLTATR_CTL_NNP, 0);
+    BAIL_ON_ERROR(err)
+
+    err = seccomp_load(ctx);
+    BAIL_ON_ERROR(err)
+
+    seccomp_release(ctx);
+    printf("Finished managing child process system calls\n");
     return 0;
 }
