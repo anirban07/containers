@@ -1,5 +1,6 @@
+LIBS=-lcap -lseccomp
 all: main.c
-	gcc -Wall -g -lcap -lseccomp main.c -o main
+	gcc -Wall -g main.c -o main ${LIBS}
 
 clean:
 	rm -f main
