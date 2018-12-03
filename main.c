@@ -1,4 +1,7 @@
 #define _GNU_SOURCE
+
+#include "utils.h"
+
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -9,22 +12,13 @@
 #include <fcntl.h>
 #include <sys/mount.h>
 #include <syscall.h>
-#include <sys/stat.h>
 #include <string.h>
-#include <dirent.h>
 #include <errno.h>
 #include <sys/prctl.h>
 #include <sys/capability.h>
 #include <seccomp.h>
 
 #define DEFAULT_PROG "/bin/bash"
-
-#define BAIL_ON_ERROR(err) \
-    if ((err) == -1) { \
-        perror(NULL); \
-        printf("%d\n", errno); \
-        return -1; \
-    }
 
 #define SCMP_FAIL SCMP_ACT_ERRNO(EPERM)
 
@@ -221,6 +215,12 @@ static int mounts(struct config *config) {
     char old_root[sizeof(inner_mount_dir) + 1] = { '/' };
     strcpy(&old_root[1], old_root_name);
 
+    err = umount2(old_root_name, MNT_DETACH);
+    BAIL_ON_ERROR(err)
+
+    err = rmdir(old_root_name);
+    BAIL_ON_ERROR(err)
+    
     return err;
 }
 
