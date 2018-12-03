@@ -47,6 +47,8 @@ int copy_file(char *src, char *dest) {
     while ((num_read = fread(read_buf, 1, COPY_BUF_SIZE, src_file)) != 0) {
         fwrite(read_buf, 1, num_read, dest_file);
     }
+    fclose(src_file);
+    fclose(dest_file);
     return 0;
 }
 
@@ -75,7 +77,7 @@ static int copy_recursive(char *dest, char *src) {
         BAIL_ON_ERROR(err)
     } else {
         fprintf(stderr, "%s is not a regular file or directory\n", src);
-        return -1;
+        return 0;
     }
     return err;
 }
