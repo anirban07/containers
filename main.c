@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <sys/mount.h>
 #include <syscall.h>
+#include <sys/stat.h>
 #include <string.h>
 #include <errno.h>
 #include <sys/prctl.h>
@@ -237,6 +238,7 @@ static int mounts(struct config *config) {
 
     err = rmdir(old_root_name);
     BAIL_ON_ERROR(err)
+
     
 error:
     return err;
@@ -303,11 +305,28 @@ static int cgroups_and_resources() {
   return 0;
 }
 
+int mount_proc() {
+    int err = 0;
+    struct stat st = {0};
+    if (stat("/proc", &st) == -1) {
+        err = mkdir("/proc", 0555);
+        BAIL_ON_ERROR(err)
+    }
+    err = mount("proc", "/proc", "proc", 0, NULL);
+    BAIL_ON_ERROR(err)
+
+error:
+    return err;
+}
+
 int child_func(void *_config) {
     int err = 0;
     struct config *config = (struct config *) _config;
 
     err = mounts(config);
+    BAIL_ON_ERROR(err)
+
+    err = mount_proc();
     BAIL_ON_ERROR(err)
 
     err = capabilities();
