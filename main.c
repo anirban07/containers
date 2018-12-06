@@ -1,4 +1,7 @@
 #define _GNU_SOURCE
+
+#include "utils.h"
+
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -9,9 +12,7 @@
 #include <fcntl.h>
 #include <sys/mount.h>
 #include <syscall.h>
-#include <sys/stat.h>
 #include <string.h>
-#include <dirent.h>
 #include <errno.h>
 #include <sys/prctl.h>
 #include <sys/capability.h>
@@ -23,13 +24,6 @@
 #define PIDS "16" // limit child to 16 processes
 #define WEIGHT "50" // priority of container
 #define FD_COUNT 64 
-
-#define BAIL_ON_ERROR(err) \
-    if ((err) == -1) { \
-        perror(NULL); \
-        printf("%d\n", errno); \
-        return -1; \
-    }
 
 #define SCMP_FAIL SCMP_ACT_ERRNO(EPERM)
 
@@ -112,7 +106,8 @@ static int capabilities() {
     cap_free(capabilities);
 
     printf("=> Updated child's capabilities\n");
-    return 0;
+error:
+    return err;
 }
 
 // Drops privileged syscalls
@@ -202,7 +197,9 @@ static int syscalls() {
 
     seccomp_release(ctx);
     printf("=> Filtered child's system calls\n");
-    return 0;
+
+error:
+    return err;
 }
 
 static int mounts(struct config *config) {
@@ -222,9 +219,11 @@ static int mounts(struct config *config) {
     memcpy(inner_mount_dir, mount_dir, sizeof(mount_dir) - 1);
     err = mkdtemp(inner_mount_dir) == NULL;
     BAIL_ON_ERROR(err)
+    printf("made innter mount dir\n");
 
     err = syscall(SYS_pivot_root, mount_dir, inner_mount_dir);
     BAIL_ON_ERROR(err)
+    printf("pivoted root\n");
 
     err = chdir("/");
     BAIL_ON_ERROR(err)
@@ -233,6 +232,13 @@ static int mounts(struct config *config) {
     char old_root[sizeof(inner_mount_dir) + 1] = { '/' };
     strcpy(&old_root[1], old_root_name);
 
+    err = umount2(old_root_name, MNT_DETACH);
+    BAIL_ON_ERROR(err)
+
+    err = rmdir(old_root_name);
+    BAIL_ON_ERROR(err)
+    
+error:
     return err;
 }
 
@@ -312,7 +318,9 @@ int child_func(void *_config) {
 
     err = execve(config->prog_name, config->prog_args, NULL);
     BAIL_ON_ERROR(err)
-    return 0;
+
+error:
+    return err;
 }
 
 void usage() {
