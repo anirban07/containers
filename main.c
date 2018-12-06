@@ -18,6 +18,11 @@
 #include <seccomp.h>
 
 #define DEFAULT_PROG "/bin/bash"
+#define MEMORY "536870912" // 500 MB
+#define SHARES "256" // 25% of cpu time
+#define PIDS "16" // limit child to 16 processes
+#define WEIGHT "50" // priority of container
+#define FD_COUNT 64 
 
 #define BAIL_ON_ERROR(err) \
     if ((err) == -1) { \
@@ -34,6 +39,13 @@ struct config {
     char *root_path;
 };
 
+struct cgrp_control {
+  char control[256];
+  struct cgrp_setting {
+    char name[256];
+    char value[256];
+  } **settings;
+};
 
 // Drops privileged capabilities of the root user
 static int capabilities() {
@@ -222,6 +234,67 @@ static int mounts(struct config *config) {
     strcpy(&old_root[1], old_root_name);
 
     return err;
+}
+
+static int cgroups_and_resources() {
+  struct cgrp_setting add_to_tasks = {
+    .name = "tasks",
+    .value = "0"
+  };
+
+  struct cgrp_control *cgrps[] = {
+    & (struct cgrp_control) {
+      .control = "memory",
+      .settings = (struct cgrp_setting *[]) {
+	& (struct cgrp_setting) {
+	  .name = "memory.limit_in_bytes",
+	  .value = MEMORY
+	},
+	& (struct cgrp_setting) {
+	  .name = "memory.kmem.limit_in_bytes",
+	  .value = MEMORY
+	},
+	&add_to_tasks,
+	NULL
+      }
+    },
+    & (struct cgrp_control) {
+      .control = "cpu",
+      .settings = (struct cgrp_setting *[]) {
+	& (struct cgrp_setting) {
+	  .name = "cpu.shares",
+	  .value = SHARES
+	},
+	&add_to_tasks,
+	NULL
+      }
+    },
+    & (struct cgrp_control) {
+      .control = "pids",
+      .settings = (struct cgrp_setting *[]) {
+	& (struct cgrp_setting) {
+	  .name = "pids.max",
+	  .value = PIDS
+	},
+	&add_to_tasks,
+	NULL
+      }
+    },
+    & (struct cgrp_control) {
+      .control = "blkio",
+      .settings = (struct cgrp_setting *[]) {
+	& (struct cgrp_setting) {
+	  .name = "blkio.weight",
+	  .value = WEIGHT
+	},
+	&add_to_tasks,
+	NULL
+      }
+    },
+    NULL
+  };
+
+  return 0;
 }
 
 int child_func(void *_config) {
