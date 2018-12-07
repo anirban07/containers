@@ -30,10 +30,12 @@ char *join_path(char *base_path, char *name) {
 // Copies file specified by src into dest directory
 // Overwrites existing file, or creates new file
 int copy_file(char *src, char *dest) {
+    int err = 0;
     char read_buf[COPY_BUF_SIZE];
     size_t num_read;
     FILE *src_file = fopen(src, "r");
     if (!src_file) {
+        err = -1;
         BAIL()
     }
     char *file_name = basename(src);
@@ -41,6 +43,7 @@ int copy_file(char *src, char *dest) {
     FILE *dest_file = fopen(dest_file_path, "w");
     free(dest_file_path);
     if (!dest_file) {
+        err = -1;
         BAIL()
     }
 
@@ -49,7 +52,9 @@ int copy_file(char *src, char *dest) {
     }
     fclose(src_file);
     fclose(dest_file);
-    return 0;
+
+error:
+    return err;
 }
 
 static int copy_recursive(char *dest, char *src) {
@@ -79,6 +84,8 @@ static int copy_recursive(char *dest, char *src) {
         fprintf(stderr, "%s is not a regular file or directory\n", src);
         return 0;
     }
+
+error:
     return err;
 }
 
@@ -92,6 +99,7 @@ int copy_dir(char *dest, char *src) {
 
     DIR *src_dir = opendir(src);
     if (!src_dir) {
+        err = -1;
         BAIL()
     }
     struct dirent *ent;
@@ -105,6 +113,7 @@ int copy_dir(char *dest, char *src) {
         BAIL_ON_ERROR(err)
     }
 
+error:
     closedir(src_dir);
     return err;
 }

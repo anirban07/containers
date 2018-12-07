@@ -94,7 +94,8 @@ static int capabilities() {
     cap_free(capabilities);
 
     printf("=> Updated child's capabilities\n");
-    return 0;
+error:
+    return err;
 }
 
 // Drops privileged syscalls
@@ -184,7 +185,9 @@ static int syscalls() {
 
     seccomp_release(ctx);
     printf("=> Filtered child's system calls\n");
-    return 0;
+
+error:
+    return err;
 }
 
 static int mounts(struct config *config) {
@@ -204,9 +207,11 @@ static int mounts(struct config *config) {
     memcpy(inner_mount_dir, mount_dir, sizeof(mount_dir) - 1);
     err = mkdtemp(inner_mount_dir) == NULL;
     BAIL_ON_ERROR(err)
+    printf("made innter mount dir\n");
 
     err = syscall(SYS_pivot_root, mount_dir, inner_mount_dir);
     BAIL_ON_ERROR(err)
+    printf("pivoted root\n");
 
     err = chdir("/");
     BAIL_ON_ERROR(err)
@@ -221,6 +226,7 @@ static int mounts(struct config *config) {
     err = rmdir(old_root_name);
     BAIL_ON_ERROR(err)
     
+error:
     return err;
 }
 
@@ -239,7 +245,9 @@ int child_func(void *_config) {
 
     err = execve(config->prog_name, config->prog_args, NULL);
     BAIL_ON_ERROR(err)
-    return 0;
+
+error:
+    return err;
 }
 
 void usage() {

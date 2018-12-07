@@ -3,7 +3,7 @@
 #define BAIL() \
     perror(NULL); \
     printf("%d\n", errno); \
-    return errno; \
+    goto error; \
 
 #define BAIL_ON_ERROR(err) \
     if ((err) == -1) { \
