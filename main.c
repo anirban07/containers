@@ -20,6 +20,7 @@
 #include <seccomp.h>
 
 #define DEFAULT_PROG "/bin/bash"
+#define DEFAULT_HOSTNAME "cannotbecontained"
 #define MEMORY "536870912" // 500 MB
 #define SHARES "256" // 25% of cpu time
 #define PIDS "16" // limit child to 16 processes
@@ -302,6 +303,8 @@ static int cgroups_and_resources() {
     NULL
   };
 
+    
+
   return 0;
 }
 
@@ -323,6 +326,9 @@ int child_func(void *_config) {
     int err = 0;
     struct config *config = (struct config *) _config;
 
+    err = sethostname(DEFAULT_HOSTNAME, strlen(DEFAULT_HOSTNAME));
+    BAIL_ON_ERROR(err)
+
     err = mounts(config);
     BAIL_ON_ERROR(err)
 
@@ -330,7 +336,7 @@ int child_func(void *_config) {
     BAIL_ON_ERROR(err)
 
     err = capabilities();
-    BAIL_ON_ERROR(err);
+    BAIL_ON_ERROR(err)
 
     err = syscalls();
     BAIL_ON_ERROR(err)
@@ -360,7 +366,7 @@ int main(int argc, char *argv[]) {
         prog_args = &argv[2];
     }
 
-    int flags = CLONE_NEWPID | CLONE_NEWNS | SIGCHLD;
+    int flags = CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWUTS | SIGCHLD;
     const size_t STACK_SIZE = 1 << 20;
     uint8_t *stack = (uint8_t *) malloc(STACK_SIZE);
     if (!stack) {
