@@ -3,6 +3,7 @@
 #include "utils.h"
 
 #include <sched.h>
+#include <linux/sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
