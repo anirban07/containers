@@ -18,6 +18,7 @@
 #include <sys/prctl.h>
 #include <sys/capability.h>
 #include <seccomp.h>
+#include <sys/resource.h>
 
 #define DEFAULT_PROG "/bin/bash"
 #define DEFAULT_HOSTNAME "cannotbecontained"
@@ -25,7 +26,8 @@
 #define SHARES "256" // 25% of cpu time
 #define PIDS "16" // limit child to 16 processes
 #define WEIGHT "50" // priority of container
-#define FD_COUNT 64 
+#define FD_COUNT 64
+#define PATH_LEN 128
 
 #define SCMP_FAIL SCMP_ACT_ERRNO(EPERM)
 
@@ -245,7 +247,7 @@ error:
     return err;
 }
 
-static int cgroups_and_resources() {
+static int cgroups_and_resources(char* hostname) {
   struct cgrp_setting add_to_tasks = {
     .name = "tasks",
     .value = "0"
@@ -303,9 +305,46 @@ static int cgroups_and_resources() {
     NULL
   };
 
-    
+  int err = 0;
 
-  return 0;
+  for (struct cgrp_control **group = cgrps; *group; group++) {
+    // Create a directory under the hostname of the child
+    // for each control group
+    char dirpath[PATH_LEN] = {0};
+    err = snprintf(dirpath, sizeof(dirpath), "/sys/fs/cgroup/%s/%s", (*group)->control, hostname);
+    BAIL_ON_ERROR(err)
+    
+    err = mkdir(dirpath, S_IRUSR | S_IWUSR | S_IXUSR);
+    BAIL_ON_ERROR(err)
+
+    // Then write the settings for each cgroup
+    for (struct cgrp_setting **setting = (*group)->settings; *setting; setting++) {
+      char setting_path[PATH_LEN] = {0};
+      int fd = 0;
+      err = snprintf(setting_path, sizeof(setting_path), "%s/%s", dirpath, (*setting)->name);
+      BAIL_ON_ERROR(err)
+
+      fd = open(setting_path, O_WRONLY);
+      BAIL_ON_ERROR(fd)
+      
+      err = write(fd, (*setting)->value, strlen((*setting)->value));
+      BAIL_ON_ERROR(err)
+
+      close(fd);
+    }
+  }
+
+  // Finally, limit the number of new file descriptors using setrlimit
+  struct rlimit fd_limit = {
+    .rlim_max = FD_COUNT,
+    .rlim_cur = FD_COUNT
+  };
+
+  err = setrlimit(RLIMIT_NOFILE, &fd_limit);
+  BAIL_ON_ERROR(err)
+  
+error:
+  return err;
 }
 
 int mount_proc() {
@@ -366,11 +405,15 @@ int main(int argc, char *argv[]) {
         prog_args = &argv[2];
     }
 
-    int flags = CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWUTS | SIGCHLD;
+    int flags = CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWCGROUP | SIGCHLD;
     const size_t STACK_SIZE = 1 << 20;
     uint8_t *stack = (uint8_t *) malloc(STACK_SIZE);
     if (!stack) {
         return 1;
+    }
+
+    if (!cgroups_and_resources(DEFAULT_HOSTNAME)) {
+      return 1;
     }
     
     struct config config = {prog_name, prog_args, child_root_path};
