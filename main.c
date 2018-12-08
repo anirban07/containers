@@ -207,7 +207,9 @@ error:
     return err;
 }
 
-static int mounts(struct config *config) {
+// make root_path the new root.
+// need temp mount_dir to pivot root. -- Not sure why
+static int mounts(char *root_path) {
     int err = 0;
     err = mount(NULL, "/", NULL, MS_PRIVATE | MS_REC, NULL);
     BAIL_ON_ERROR(err)
@@ -217,7 +219,7 @@ static int mounts(struct config *config) {
     BAIL_ON_ERROR(err)
     printf("=> Child's root directory: %s\n", mount_dir);
 
-    err = mount(config->root_path, mount_dir, NULL, MS_BIND | MS_PRIVATE, NULL);
+    err = mount(root_path, mount_dir, NULL, MS_BIND | MS_PRIVATE, NULL);
     BAIL_ON_ERROR(err)
 
     char inner_mount_dir[] = "/tmp/container_tmp.XXXXXX/old_root.XXXXXX";
@@ -242,7 +244,6 @@ static int mounts(struct config *config) {
 
     err = rmdir(old_root_name);
     BAIL_ON_ERROR(err)
-
     
 error:
     return err;
