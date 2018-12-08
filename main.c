@@ -202,8 +202,7 @@ static int mounts(char *root_path) {
     BAIL_ON_ERROR(err)
 
     char mount_dir[] = DEFAULT_CONTAINER_MT_POINT_TEMPLATE;
-    char *mount_dir = mkdtemp(mount_dir);
-    err = mount_dir == NULL;
+    err = mkdtemp(mount_dir) == NULL;
     BAIL_ON_ERROR(err)
 
     err = mount(root_path, mount_dir, NULL, MS_BIND | MS_PRIVATE, NULL);
