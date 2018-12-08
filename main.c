@@ -20,6 +20,10 @@
 #include <seccomp.h>
 
 #define DEFAULT_PROG "/bin/bash"
+#define DEFAULT_CONTAINER_ROOT_TEMPLATE "/tmp/container_root.XXXXXX"
+#define DEFAULT_CONTAINER_MT_POINT_TEMPLATE "/tmp/container_tmp.XXXXXX"
+#define DEFAULT_OLD_ROOT "/old_root.XXXXXX"
+#define DEFAULT_OLD_ROOT_TEMPLATE DEFAULT_CONTAINER_MT_POINT_TEMPLATE DEFAULT_OLD_ROOT
 
 #define SCMP_FAIL SCMP_ACT_ERRNO(EPERM)
 
@@ -28,7 +32,6 @@ struct config {
     char **prog_args;
     char *root_path;
 };
-
 
 // Drops privileged capabilities of the root user
 static int capabilities() {
@@ -198,23 +201,21 @@ static int mounts(char *root_path) {
     err = mount(NULL, "/", NULL, MS_PRIVATE | MS_REC, NULL);
     BAIL_ON_ERROR(err)
 
-    char mount_dir[] = "/tmp/container_tmp.XXXXXX";
-    err = mkdtemp(mount_dir) == NULL;
+    char mount_dir[] = DEFAULT_CONTAINER_MT_POINT_TEMPLATE;
+    char *mount_dir = mkdtemp(mount_dir);
+    err = mount_dir == NULL;
     BAIL_ON_ERROR(err)
-    printf("=> Child's root directory: %s\n", mount_dir);
 
     err = mount(root_path, mount_dir, NULL, MS_BIND | MS_PRIVATE, NULL);
     BAIL_ON_ERROR(err)
 
-    char inner_mount_dir[] = "/tmp/container_tmp.XXXXXX/old_root.XXXXXX";
+    char inner_mount_dir[] = DEFAULT_OLD_ROOT_TEMPLATE;
     memcpy(inner_mount_dir, mount_dir, sizeof(mount_dir) - 1);
     err = mkdtemp(inner_mount_dir) == NULL;
     BAIL_ON_ERROR(err)
-    printf("made innter mount dir\n");
 
     err = syscall(SYS_pivot_root, mount_dir, inner_mount_dir);
     BAIL_ON_ERROR(err)
-    printf("pivoted root\n");
 
     err = chdir("/");
     BAIL_ON_ERROR(err)
@@ -271,21 +272,66 @@ error:
 }
 
 void usage() {
-    printf("Usage: ./main DIR [CMD [ARG]...]\n");
+    printf("Usage: ./main [-r root_dir/] [-b base_image/] [CMD [ARG]...]\n");
+    exit(1);
 }
 
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        usage();
-        exit(1);
-    }
-    char *child_root_path = argv[1];
-
-    char *prog_name = DEFAULT_PROG;
+int main(int argc, char **argv) {
+    int option;
+    int err;
+    char *prog_name;
     char **prog_args = {NULL};
-    if (argc >= 3) {
-        prog_name = argv[2];
-        prog_args = &argv[2];
+    char *root_dir_path = NULL;
+    char *base_image_path = NULL;
+
+    while ((option = getopt(argc, argv, "+r:b:")) != -1) {
+        switch(option) {
+            case 'r':
+                root_dir_path = optarg;
+                break;
+            case 'b':
+                base_image_path = optarg;
+                break;
+            default:
+                usage();
+        }
+    }
+
+    if (!root_dir_path && !base_image_path) {
+        usage();
+    }
+
+    if (!root_dir_path) {
+        char root_dir_path_arr[] = DEFAULT_CONTAINER_ROOT_TEMPLATE;
+        root_dir_path = mkdtemp(root_dir_path_arr);
+        if (!root_dir_path) {
+            perror("mkdtemp error");
+        }
+    }
+
+    if (base_image_path) {
+        printf("=> Clearing out contents of %s...", root_dir_path);
+        fflush(stdout);
+        char *rm_format_str = "rm -rf %s/*";
+        char rm_command_buf[strlen(rm_format_str) + strlen(root_dir_path)];
+        snprintf(rm_command_buf, sizeof(rm_command_buf), rm_format_str, root_dir_path);
+        system(rm_command_buf);
+        printf("done\n");
+
+        printf("=> Copying base image %s into %s...", base_image_path, root_dir_path);
+        fflush(stdout);
+        char *cp_format_str = "cp -r %s/* %s";
+        char cp_command_buf[strlen(cp_format_str) + strlen(base_image_path) + strlen(root_dir_path)];
+        snprintf(cp_command_buf, sizeof(cp_command_buf), cp_format_str, base_image_path, root_dir_path);
+        system(cp_command_buf);
+        printf("done\n");
+    }
+
+    if (argc <= optind) {
+        prog_name = DEFAULT_PROG;
+    } else {
+        prog_name = argv[optind];
+        prog_args = &argv[optind];
     }
 
     int flags = CLONE_NEWPID | CLONE_NEWNS | SIGCHLD;
@@ -295,8 +341,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    struct config config = {prog_name, prog_args, child_root_path};
-    int err = clone(&child_func, stack + STACK_SIZE, flags, &config);
+    struct config config = {prog_name, prog_args, root_dir_path};
+    err = clone(&child_func, stack + STACK_SIZE, flags, &config);
     if (err == -1) {
       perror("Clone error");
     }
