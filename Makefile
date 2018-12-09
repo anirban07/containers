@@ -1,5 +1,5 @@
 LIBS=-lcap -lseccomp
-all: main.c
+all: main.c cgroups.h
 	gcc -Wall -g main.c utils.c -o main ${LIBS}
 
 test_utils: test_utils.c utils.c utils.h

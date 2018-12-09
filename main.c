@@ -1,7 +1,5 @@
 #define _GNU_SOURCE
 
-#include "utils.h"
-
 #include <sched.h>
 #include <linux/sched.h>
 #include <stdint.h>
@@ -19,14 +17,12 @@
 #include <sys/prctl.h>
 #include <sys/capability.h>
 #include <seccomp.h>
-#include <sys/resource.h>
+
+#include "utils.h"
+#include "cgroups.h"
 
 #define DEFAULT_PROG "/bin/bash"
 #define DEFAULT_HOSTNAME "cannotbecontained"
-#define MEMORY "536870912" // 500 MB
-#define SHARES "256" // 25% of cpu time
-#define PIDS "64" // limit child to 16 processes
-#define WEIGHT "10" // priority of container
 #define FD_COUNT 64
 #define PATH_LEN 128
 #define DEFAULT_CONTAINER_ROOT_TEMPLATE "/tmp/container_root.XXXXXX"
@@ -40,14 +36,6 @@ struct config {
     char *prog_name;
     char **prog_args;
     char *root_path;
-};
-
-struct cgrp_control {
-  char control[256];
-  struct cgrp_setting {
-    char name[256];
-    char value[256];
-  } **settings;
 };
 
 // Drops privileged capabilities of the root user
@@ -251,63 +239,6 @@ error:
 }
 
 static int cgroups_and_resources(char* hostname) {
-    struct cgrp_setting add_to_tasks = {
-        .name = "tasks",
-        .value = "0"
-    };
-
-    struct cgrp_control *cgrps[] = {
-        & (struct cgrp_control) {
-            .control = "memory",
-            .settings = (struct cgrp_setting *[]) {
-                & (struct cgrp_setting) {
-                    .name = "memory.limit_in_bytes",
-                    .value = MEMORY
-                },
-                & (struct cgrp_setting) {
-                    .name = "memory.kmem.limit_in_bytes",
-                    .value = MEMORY
-                },
-                &add_to_tasks,
-                NULL
-            }
-        },
-        & (struct cgrp_control) {
-            .control = "cpu",
-            .settings = (struct cgrp_setting *[]) {
-                & (struct cgrp_setting) {
-                    .name = "cpu.shares",
-                    .value = SHARES
-                },
-                &add_to_tasks,
-                NULL
-            }
-        },
-        & (struct cgrp_control) {
-            .control = "pids",
-            .settings = (struct cgrp_setting *[]) {
-                & (struct cgrp_setting) {
-                    .name = "pids.max",
-                    .value = PIDS
-                },
-                &add_to_tasks,
-                NULL
-            }
-        },
-        & (struct cgrp_control) {
-            .control = "blkio",
-            .settings = (struct cgrp_setting *[]) {
-                & (struct cgrp_setting) {
-                    .name = "blkio.weight",
-                    .value = WEIGHT
-                },
-                &add_to_tasks,
-                NULL
-            }
-        },
-        NULL
-    };
-
     int err = 0;
     for (struct cgrp_control **group = cgrps; *group; group++) {
         // Create a directory under the hostname of the child
@@ -346,6 +277,34 @@ static int cgroups_and_resources(char* hostname) {
 
     err = setrlimit(RLIMIT_NOFILE, &fd_limit);
     BAIL_ON_ERROR(err)
+
+error:
+    return err;
+}
+
+static int free_cgroups_and_resources(char* hostname) {
+    int err = 0;
+    for (struct cgrp_control **group = cgrps; *group; group++) {
+        char dirpath[PATH_LEN] = {0};
+	char taskpath[PATH_LEN] = {0};
+	int fd = 0;
+	err = snprintf(dirpath, sizeof(dirpath), "/sys/fs/cgroup/%s/%s", (*group)->control, hostname);
+	BAIL_ON_ERROR(err)
+	
+	err = snprintf(taskpath, sizeof(taskpath), "/sys/fs/cgroup/%s/tasks", (*group)->control);
+	BAIL_ON_ERROR(err)
+	
+	fd = open(taskpath, O_WRONLY);
+	BAIL_ON_ERROR(fd)
+
+	err = write(fd, "0", 2);
+	BAIL_ON_ERROR(err)
+
+	close(fd);
+
+	err = rmdir(dirpath) == 0 ? 0 : -1;
+	BAIL_ON_ERROR(err)
+    }
 
 error:
     return err;
@@ -473,5 +432,6 @@ int main(int argc, char **argv) {
 
     wait(NULL);
     free(stack);
+    free_cgroups_and_resources(DEFAULT_HOSTNAME);
     return 0;
 }
