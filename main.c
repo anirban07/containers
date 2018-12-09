@@ -25,8 +25,8 @@
 #define DEFAULT_HOSTNAME "cannotbecontained"
 #define MEMORY "536870912" // 500 MB
 #define SHARES "256" // 25% of cpu time
-#define PIDS "16" // limit child to 16 processes
-#define WEIGHT "50" // priority of container
+#define PIDS "64" // limit child to 16 processes
+#define WEIGHT "10" // priority of container
 #define FD_COUNT 64
 #define PATH_LEN 128
 #define DEFAULT_CONTAINER_ROOT_TEMPLATE "/tmp/container_root.XXXXXX"
@@ -251,103 +251,104 @@ error:
 }
 
 static int cgroups_and_resources(char* hostname) {
-  struct cgrp_setting add_to_tasks = {
-    .name = "tasks",
-    .value = "0"
-  };
+    struct cgrp_setting add_to_tasks = {
+        .name = "tasks",
+        .value = "0"
+    };
 
-  struct cgrp_control *cgrps[] = {
-    & (struct cgrp_control) {
-      .control = "memory",
-      .settings = (struct cgrp_setting *[]) {
-	& (struct cgrp_setting) {
-	  .name = "memory.limit_in_bytes",
-	  .value = MEMORY
-	},
-	& (struct cgrp_setting) {
-	  .name = "memory.kmem.limit_in_bytes",
-	  .value = MEMORY
-	},
-	&add_to_tasks,
-	NULL
-      }
-    },
-    & (struct cgrp_control) {
-      .control = "cpu",
-      .settings = (struct cgrp_setting *[]) {
-	& (struct cgrp_setting) {
-	  .name = "cpu.shares",
-	  .value = SHARES
-	},
-	&add_to_tasks,
-	NULL
-      }
-    },
-    & (struct cgrp_control) {
-      .control = "pids",
-      .settings = (struct cgrp_setting *[]) {
-	& (struct cgrp_setting) {
-	  .name = "pids.max",
-	  .value = PIDS
-	},
-	&add_to_tasks,
-	NULL
-      }
-    },
-    & (struct cgrp_control) {
-      .control = "blkio",
-      .settings = (struct cgrp_setting *[]) {
-	& (struct cgrp_setting) {
-	  .name = "blkio.weight",
-	  .value = WEIGHT
-	},
-	&add_to_tasks,
-	NULL
-      }
-    },
-    NULL
-  };
+    struct cgrp_control *cgrps[] = {
+        & (struct cgrp_control) {
+            .control = "memory",
+            .settings = (struct cgrp_setting *[]) {
+                & (struct cgrp_setting) {
+                    .name = "memory.limit_in_bytes",
+                    .value = MEMORY
+                },
+                & (struct cgrp_setting) {
+                    .name = "memory.kmem.limit_in_bytes",
+                    .value = MEMORY
+                },
+                &add_to_tasks,
+                NULL
+            }
+        },
+        & (struct cgrp_control) {
+            .control = "cpu",
+            .settings = (struct cgrp_setting *[]) {
+                & (struct cgrp_setting) {
+                    .name = "cpu.shares",
+                    .value = SHARES
+                },
+                &add_to_tasks,
+                NULL
+            }
+        },
+        & (struct cgrp_control) {
+            .control = "pids",
+            .settings = (struct cgrp_setting *[]) {
+                & (struct cgrp_setting) {
+                    .name = "pids.max",
+                    .value = PIDS
+                },
+                &add_to_tasks,
+                NULL
+            }
+        },
+        & (struct cgrp_control) {
+            .control = "blkio",
+            .settings = (struct cgrp_setting *[]) {
+                & (struct cgrp_setting) {
+                    .name = "blkio.weight",
+                    .value = WEIGHT
+                },
+                &add_to_tasks,
+                NULL
+            }
+        },
+        NULL
+    };
 
-  int err = 0;
+    int err = 0;
+    for (struct cgrp_control **group = cgrps; *group; group++) {
+        // Create a directory under the hostname of the child
+        // for each control group
+        char dirpath[PATH_LEN] = {0};
+        err = snprintf(dirpath, sizeof(dirpath), "/sys/fs/cgroup/%s/%s", (*group)->control, hostname);
+        BAIL_ON_ERROR(err)
 
-  for (struct cgrp_control **group = cgrps; *group; group++) {
-    // Create a directory under the hostname of the child
-    // for each control group
-    char dirpath[PATH_LEN] = {0};
-    err = snprintf(dirpath, sizeof(dirpath), "/sys/fs/cgroup/%s/%s", (*group)->control, hostname);
-    BAIL_ON_ERROR(err)
-    
-    err = mkdir(dirpath, S_IRUSR | S_IWUSR | S_IXUSR);
-    BAIL_ON_ERROR(err)
+        printf("Writing %s cgroup\n", (*group)->control);
+        err = mkdir(dirpath, S_IRUSR | S_IWUSR | S_IXUSR);
+        BAIL_ON_ERROR(err)
 
-    // Then write the settings for each cgroup
-    for (struct cgrp_setting **setting = (*group)->settings; *setting; setting++) {
-      char setting_path[PATH_LEN] = {0};
-      int fd = 0;
-      err = snprintf(setting_path, sizeof(setting_path), "%s/%s", dirpath, (*setting)->name);
-      BAIL_ON_ERROR(err)
+        printf("\tSuccessfully made directory in cgroup\n");
+        // Then write the settings for each cgroup
+        for (struct cgrp_setting **setting = (*group)->settings; *setting; setting++) {
+            char setting_path[PATH_LEN] = {0};
+            int fd = 0;
+            err = snprintf(setting_path, sizeof(setting_path), "%s/%s", dirpath, (*setting)->name);
+            BAIL_ON_ERROR(err)
 
-      fd = open(setting_path, O_WRONLY);
-      BAIL_ON_ERROR(fd)
-      
-      err = write(fd, (*setting)->value, strlen((*setting)->value));
-      BAIL_ON_ERROR(err)
+            fd = open(setting_path, O_WRONLY);
+            BAIL_ON_ERROR(fd)
+            
+            err = write(fd, (*setting)->value, strlen((*setting)->value));
+            BAIL_ON_ERROR(err)
 
-      close(fd);
+            close(fd);
+        }
     }
-  }
 
-  // Finally, limit the number of new file descriptors using setrlimit
-  struct rlimit fd_limit = {
-    .rlim_max = FD_COUNT,
-    .rlim_cur = FD_COUNT
-  };
+    // Finally, limit the number of new file descriptors using setrlimit
+    struct rlimit fd_limit = {
+        .rlim_max = FD_COUNT,
+        .rlim_cur = FD_COUNT
+    };
 
-  err = setrlimit(RLIMIT_NOFILE, &fd_limit);
-  BAIL_ON_ERROR(err)
-  
+    err = setrlimit(RLIMIT_NOFILE, &fd_limit);
+    BAIL_ON_ERROR(err)
+
 error:
-  return err;
+    return err;
 }
 
 int mount_proc() {
@@ -371,7 +372,7 @@ int child_func(void *_config) {
     err = sethostname(DEFAULT_HOSTNAME, strlen(DEFAULT_HOSTNAME));
     BAIL_ON_ERROR(err)
 
-    err = mounts(config);
+    err = mounts(config->root_path);
     BAIL_ON_ERROR(err)
 
     err = mount_proc();
@@ -460,7 +461,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (!cgroups_and_resources(DEFAULT_HOSTNAME)) {
+    if (cgroups_and_resources(DEFAULT_HOSTNAME)) {
       return 1;
     }
     
@@ -471,5 +472,6 @@ int main(int argc, char **argv) {
     }
 
     wait(NULL);
+    free(stack);
     return 0;
 }
