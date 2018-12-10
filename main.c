@@ -22,7 +22,7 @@
 #include "cgroups.h"
 
 #define DEFAULT_PROG "/bin/bash"
-#define DEFAULT_HOSTNAME "cannotbecontainedeither"
+#define DEFAULT_HOSTNAME "cannotbecontained"
 #define FD_COUNT 64
 #define PATH_LEN 128
 #define DEFAULT_CONTAINER_ROOT_TEMPLATE "/tmp/container_root.XXXXXX"
@@ -36,6 +36,7 @@ struct config {
     char *prog_name;
     char **prog_args;
     char *root_path;
+    char *hostname;
 };
 
 // Drops privileged capabilities of the root user
@@ -329,7 +330,7 @@ int child_func(void *_config) {
     int err = 0;
     struct config *config = (struct config *) _config;
 
-    err = sethostname(DEFAULT_HOSTNAME, strlen(DEFAULT_HOSTNAME));
+    err = sethostname(config->hostname, strlen(config->hostname));
     BAIL_ON_ERROR(err)
 
     err = mounts(config->root_path);
@@ -352,7 +353,7 @@ error:
 }
 
 void usage() {
-    printf("Usage: ./main [-r root_dir/] [-b base_image/] [CMD [ARG]...]\n");
+    printf("Usage: ./main [-r root_dir/] [-b base_image/] [-h hostname] [CMD [ARG]...]\n");
     exit(1);
 }
 
@@ -363,14 +364,18 @@ int main(int argc, char **argv) {
     char **prog_args = {NULL};
     char *root_dir_path = NULL;
     char *base_image_path = NULL;
+    char *hostname = NULL;
 
-    while ((option = getopt(argc, argv, "+r:b:")) != -1) {
+    while ((option = getopt(argc, argv, "+r:b:h:")) != -1) {
         switch(option) {
             case 'r':
                 root_dir_path = optarg;
                 break;
             case 'b':
                 base_image_path = optarg;
+                break;
+            case 'h':
+                hostname = optarg;
                 break;
             default:
                 usage();
@@ -379,6 +384,10 @@ int main(int argc, char **argv) {
 
     if (!root_dir_path && !base_image_path) {
         usage();
+    }
+
+    if (!hostname) {
+        hostname = DEFAULT_HOSTNAME;
     }
 
     if (!root_dir_path) {
@@ -421,11 +430,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (cgroups_and_resources(DEFAULT_HOSTNAME)) {
+    if (cgroups_and_resources(hostname)) {
       return 1;
     }
     
-    struct config config = {prog_name, prog_args, root_dir_path};
+    struct config config = {prog_name, prog_args, root_dir_path, hostname};
     err = clone(&child_func, stack + STACK_SIZE, flags, &config);
     if (err == -1) {
       perror("Clone error");
@@ -433,6 +442,6 @@ int main(int argc, char **argv) {
 
     wait(NULL);
     free(stack);
-    free_cgroups_and_resources(DEFAULT_HOSTNAME);
+    free_cgroups_and_resources(hostname);
     return 0;
 }
