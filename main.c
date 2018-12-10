@@ -251,7 +251,6 @@ static int cgroups_and_resources(char* hostname) {
         err = mkdir(dirpath, S_IRUSR | S_IWUSR | S_IXUSR);
         BAIL_ON_ERROR(err)
 
-        printf("\tSuccessfully made directory in cgroup\n");
         // Then write the settings for each cgroup
         for (struct cgrp_setting **setting = (*group)->settings; *setting; setting++) {
             char setting_path[PATH_LEN] = {0};
@@ -266,9 +265,11 @@ static int cgroups_and_resources(char* hostname) {
             BAIL_ON_ERROR(err)
 
             close(fd);
+	    printf("\tWrote %s to %s\n", (*setting)->value, setting_path);
         }
     }
-
+    
+    printf("\tSuccessfully made directory in cgroup\n");
     // Finally, limit the number of new file descriptors using setrlimit
     struct rlimit fd_limit = {
         .rlim_max = FD_COUNT,
