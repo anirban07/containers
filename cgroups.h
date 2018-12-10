@@ -1,8 +1,8 @@
 #include <sys/resource.h>
 
-#define MEMORY "1048576" // 1 MB
+#define MEMORY "10485760" // 10 MB
 #define SHARES "256" // 25% of cpu time
-#define PIDS "64" // limit child to 16 processes
+#define PIDS "10" // limit child to 10 processes
 #define WEIGHT "50" // priority of container
 #define LEN 256
 
@@ -23,10 +23,10 @@ struct cgrp_control *cgrps[] = {
     & (struct cgrp_control) {
         .control = "memory",
         .settings = (struct cgrp_setting *[]) {
-	    &(struct cgrp_setting) {
-	        .name = "memory.soft_limit_in_bytes",
-	        .value = MEMORY
-	    },
+	        &(struct cgrp_setting) {
+	            .name = "memory.soft_limit_in_bytes",
+	            .value = MEMORY
+	        },
             & (struct cgrp_setting) {
                 .name = "memory.limit_in_bytes",
                 .value = MEMORY

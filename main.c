@@ -22,7 +22,7 @@
 #include "cgroups.h"
 
 #define DEFAULT_PROG "/bin/bash"
-#define DEFAULT_HOSTNAME "cannotbecontained"
+#define DEFAULT_HOSTNAME "cannotbecontainedeither"
 #define FD_COUNT 64
 #define PATH_LEN 128
 #define DEFAULT_CONTAINER_ROOT_TEMPLATE "/tmp/container_root.XXXXXX"
